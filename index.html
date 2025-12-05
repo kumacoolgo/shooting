@@ -3,24 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>AR 忍者切水果</title>
+    <title>AR 忍者：畅玩版</title>
     <style>
         body { 
             margin: 0; overflow: hidden; background-color: #000; 
             height: 100dvh; width: 100vw; touch-action: none; 
             font-family: 'Arial', sans-serif; user-select: none;
         }
-        /* 视频背景 */
         #input_video { 
             position: absolute; width: 100%; height: 100%; 
             object-fit: cover; transform: scaleX(-1); 
             z-index: 0; opacity: 0.8; filter: saturate(1.2);
         }
-        /* 3D 渲染层 */
         #output_canvas { 
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; 
         }
-        /* UI 层 */
         #hud { 
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
             z-index: 2; pointer-events: none; 
@@ -32,12 +29,12 @@
         }
         .lives {
             position: absolute; top: 20px; right: 20px;
-            color: #ff3333; font-size: 24px;
+            color: #ff3333; font-size: 24px; font-weight: bold;
+            text-shadow: 1px 1px 2px black;
         }
-        /* 开始/结束遮罩 */
         #overlay { 
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            background: rgba(0,0,0,0.8); z-index: 999; display: flex; 
+            background: rgba(0,0,0,0.85); z-index: 999; display: flex; 
             flex-direction: column; justify-content: center; align-items: center; 
             color: white; transition: opacity 0.3s; 
         }
@@ -46,7 +43,6 @@
             color: #000; font-size: 22px; font-weight: bold; border: none; border-radius: 8px; 
             cursor: pointer; box-shadow: 0 5px #cc6600; margin-top: 20px;
         }
-        #start-btn:active, #restart-btn:active { box-shadow: 0 2px #cc6600; transform: translateY(3px); }
         h1 { margin: 0; font-style: italic; color: #ffcc00; text-shadow: 2px 2px #ff0000; font-size: 40px; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -58,11 +54,11 @@
 
     <div id="overlay">
         <h1 id="overlay-title">AR 水果忍者</h1>
-        <div id="loading-text" style="margin-top: 20px;">正在磨刀 (加载 AI)...</div>
-        <button id="start-btn" style="display:none;">开始切！</button>
+        <div id="loading-text" style="margin-top: 20px;">正在加载 AI...</div>
+        <button id="start-btn" style="display:none;">开始游戏 (30条命)</button>
         <div id="game-over-content" style="display:none; text-align: center;">
             <h2 style="color:#fff">游戏结束</h2>
-            <p style="font-size: 24px;">得分: <span id="final-score">0</span></p>
+            <p style="font-size: 24px;">最终得分: <span id="final-score">0</span></p>
             <button id="restart-btn">再来一局</button>
         </div>
     </div>
@@ -72,16 +68,23 @@
     
     <div id="hud">
         <div class="score-board">SCORE: <span id="score">0</span></div>
-        <div class="lives" id="lives">❤️❤️❤️</div>
+        <div class="lives" id="lives">HP: 30</div>
     </div>
 
 <script>
-// ================= 配置与状态 =================
+// ================= 配置调整区域 =================
 const config = {
-    gravity: -0.008,       // 重力加速度
-    spawnRate: 0.02,       // 出水果概率
-    swipeSpeedThreshold: 15, // 切割需要的最小速度(像素/帧)
-    maxLives: 3
+    // 【修改】减小重力，让水果飞得更慢、更飘逸
+    gravity: -0.005,       
+    
+    // 出现频率
+    spawnRate: 0.02,       
+    
+    // 切割灵敏度
+    swipeSpeedThreshold: 12, 
+    
+    // 【修改】生命值改为 30
+    maxLives: 30
 };
 
 let state = {
@@ -89,12 +92,11 @@ let state = {
     lives: config.maxLives,
     isPlaying: false,
     isGameOver: false,
-    // 手指追踪
-    fingerPos: new THREE.Vector2(), // 当前帧位置 (屏幕像素)
-    lastFingerPos: new THREE.Vector2(), // 上一帧位置
+    fingerPos: new THREE.Vector2(), 
+    lastFingerPos: new THREE.Vector2(), 
     fingerVelocity: 0,
     hasHand: false,
-    trailPoints: [] // 刀光轨迹点
+    trailPoints: [] 
 };
 
 // DOM
@@ -104,46 +106,39 @@ const overlay = document.getElementById('overlay');
 const startBtn = document.getElementById('start-btn');
 const restartBtn = document.getElementById('restart-btn');
 const loadingText = document.getElementById('loading-text');
-const gameOverContent = document.getElementById('game-over-content');
-const overlayTitle = document.getElementById('overlay-title');
 
 // ================= Three.js 基础 =================
 const scene = new THREE.Scene();
-// 使用正交相机可能更适合这种2D平面的游戏，但为了AR透视感，我们用透视相机并把物体放远点
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.z = 15; // 相机拉远，给水果抛射空间
+camera.position.z = 18; // 相机稍微拉远一点，视野更大
 
 const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('output_canvas'), alpha: true, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
 dirLight.position.set(5, 10, 7);
 scene.add(dirLight);
 
-// ================= 水果与切割系统 =================
+// ================= 水果系统 =================
 let fruits = [];
-let slicedParts = []; // 被切开的碎片
+let slicedParts = [];
 
-// 水果类型定义 (颜色，大小，分数)
 const fruitTypes = [
-    { color: 0xff9900, size: 0.8, score: 10, name: 'orange' }, // 橙子
-    { color: 0xff3333, size: 0.7, score: 15, name: 'apple' },  // 苹果
-    { color: 0xffff00, size: 0.9, score: 20, name: 'lemon' },  // 柠檬
+    { color: 0xff9900, size: 0.9, score: 10 }, // 橙
+    { color: 0xff3333, size: 0.8, score: 15 }, // 苹果
+    { color: 0xffff00, size: 1.0, score: 20 }, // 柠檬
+    { color: 0xcc00cc, size: 0.85, score: 30 }, // 李子
 ];
 
-// 预制几何体
 const wholeGeo = new THREE.SphereGeometry(1, 16, 16);
-// “半个”几何体 (通过缩放实现简单的半球效果)
 const halfGeo = new THREE.SphereGeometry(1, 16, 8, 0, Math.PI); 
 
 class Fruit {
     constructor() {
-        this.type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
-        this.mesh = new THREE.Mesh(wholeGeo, new THREE.MeshPhongMaterial({ color: this.type.color, shininess: 50 }));
-        this.mesh.scale.setScalar(this.type.size);
-        
+        this.type = fruitTypes[0];
+        this.mesh = new THREE.Mesh(wholeGeo, new THREE.MeshPhongMaterial({ color: 0xffffff, shininess: 50 }));
         this.reset();
         scene.add(this.mesh);
     }
@@ -152,18 +147,26 @@ class Fruit {
         this.active = true;
         this.isSliced = false;
         this.mesh.visible = true;
+        this.type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
+        this.mesh.material.color.setHex(this.type.color);
+        this.mesh.scale.setScalar(this.type.size);
         
-        // 从屏幕下方随机位置抛出
-        const startX = (Math.random() - 0.5) * 16;
-        this.mesh.position.set(startX, -10, 0); // Z=0 平面
+        // 【修改】初始位置：屏幕下方更深处 (-12)
+        const startX = (Math.random() - 0.5) * 14;
+        this.mesh.position.set(startX, -12, 0); 
         
-        // 初始速度：向上 + 随机水平偏移
+        // 【核心修改】初始速度优化：
+        // 1. Y轴速度大幅提升 (0.35 - 0.48)，确保飞到屏幕上半部分
+        // 2. 结合低重力，形成高抛物线
         this.velocity = new THREE.Vector3(
-            (Math.random() - 0.5) * 0.3, // 水平速度
-            0.2 + Math.random() * 0.15,  // 垂直速度
+            (Math.random() - 0.5) * 0.25, // X轴水平漂移
+            0.35 + Math.random() * 0.13,  // Y轴向上冲击力
             0
         );
-        this.rotationSpeed = new THREE.Vector3(Math.random()*0.1, Math.random()*0.1, Math.random()*0.1);
+        
+        this.rotationSpeed = new THREE.Vector3(
+            Math.random()*0.1, Math.random()*0.1, Math.random()*0.1
+        );
     }
 
     update() {
@@ -175,8 +178,8 @@ class Fruit {
         this.mesh.rotation.x += this.rotationSpeed.x;
         this.mesh.rotation.y += this.rotationSpeed.y;
 
-        // 漏掉检测：掉出屏幕下方
-        if (this.mesh.position.y < -12 && !this.isSliced) {
+        // 漏掉检测：掉出屏幕下方很远才算
+        if (this.mesh.position.y < -15 && !this.isSliced) {
             this.active = false;
             this.mesh.visible = false;
             loseLife();
@@ -192,41 +195,32 @@ class Fruit {
         playAudio('slice');
         state.score += this.type.score;
         scoreEl.innerText = state.score;
-
-        // 生成两半
         this.spawnHalves(cutDirection);
     }
 
     spawnHalves(cutDirection) {
         const mat = this.mesh.material;
-        // 垂直于切割方向
         const normal = new THREE.Vector2(-cutDirection.y, cutDirection.x);
-
         for (let i = -1; i <= 1; i += 2) {
             const half = new THREE.Mesh(halfGeo, mat);
             half.scale.setScalar(this.type.size);
             half.position.copy(this.mesh.position);
-            // 旋转半球，使切面朝向正确
             half.lookAt(this.mesh.position.clone().add(new THREE.Vector3(normal.x, normal.y, 0)));
-            if (i === 1) half.rotateX(Math.PI); // 另一半翻转
+            if (i === 1) half.rotateX(Math.PI);
             
-            // 爆炸速度
+            // 碎片受重力影响更大，掉得快一点
             half.userData.velocity = this.velocity.clone().add(
-                new THREE.Vector3(normal.x * i * 0.15, normal.y * i * 0.15 + 0.05, Math.random()*0.1)
+                new THREE.Vector3(normal.x * i * 0.1, normal.y * i * 0.1, Math.random()*0.2)
             );
-            half.userData.rotSpeed = new THREE.Vector3(Math.random()*0.2, Math.random()*0.2, Math.random()*0.2);
-            
+            half.userData.rotSpeed = new THREE.Vector3(Math.random()*0.2, Math.random(), 0);
             scene.add(half);
             slicedParts.push(half);
         }
     }
 }
 
-// 管理水果生成和更新
 function updateFruits() {
-    // 生成
     if (Math.random() < config.spawnRate) {
-        // 找一个闲置的水果对象，没有就new一个 (简单的对象池)
         let fruit = fruits.find(f => !f.active);
         if (!fruit) {
             fruit = new Fruit();
@@ -235,18 +229,13 @@ function updateFruits() {
             fruit.reset();
         }
     }
-
-    // 更新所有完整水果
     fruits.forEach(f => f.update());
-
-    // 更新被切开的碎片
     for (let i = slicedParts.length - 1; i >= 0; i--) {
         const part = slicedParts[i];
-        part.userData.velocity.y += config.gravity * 1.5; // 碎片掉得更快
+        part.userData.velocity.y += config.gravity * 1.5;
         part.position.add(part.userData.velocity);
         part.rotation.x += part.userData.rotSpeed.x;
-        
-        if (part.position.y < -15) {
+        if (part.position.y < -18) {
             scene.remove(part);
             slicedParts.splice(i, 1);
         }
@@ -256,7 +245,9 @@ function updateFruits() {
 function loseLife() {
     if (state.isGameOver) return;
     state.lives--;
-    livesEl.innerText = '❤️'.repeat(state.lives);
+    livesEl.innerText = "HP: " + state.lives;
+    livesEl.style.color = state.lives < 10 ? '#ff0000' : '#ff3333';
+    
     if (state.lives <= 0) {
         gameOver();
     }
@@ -266,10 +257,9 @@ function gameOver() {
     state.isPlaying = false;
     state.isGameOver = true;
     document.getElementById('final-score').innerText = state.score;
-    loadingText.style.display = 'none';
     startBtn.style.display = 'none';
-    gameOverContent.style.display = 'block';
-    overlayTitle.innerText = "";
+    document.getElementById('game-over-content').style.display = 'block';
+    document.getElementById('overlay-title').innerText = "";
     overlay.style.display = 'flex';
     overlay.style.opacity = 1;
 }
@@ -279,19 +269,17 @@ function resetGame() {
     state.lives = config.maxLives;
     state.isGameOver = false;
     scoreEl.innerText = "0";
-    livesEl.innerText = '❤️❤️❤️';
-    // 清理场景
+    livesEl.innerText = "HP: " + state.lives;
     fruits.forEach(f => { f.active = false; f.mesh.visible = false; });
     slicedParts.forEach(p => scene.remove(p));
     slicedParts = [];
 }
 
-// ================= 刀光轨迹与切割检测 =================
+// ================= 刀光与输入 =================
 const trailMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 3, transparent: true, opacity: 0.8 });
 const trailGeo = new THREE.BufferGeometry();
 const trailLine = new THREE.Line(trailGeo, trailMat);
 scene.add(trailLine);
-const MAX_TRAIL_POINTS = 10;
 
 function updateInputAndCheckSlice() {
     if (!state.hasHand) {
@@ -300,13 +288,10 @@ function updateInputAndCheckSlice() {
         return;
     }
 
-    // 1. 计算手指速度
     const dx = state.fingerPos.x - state.lastFingerPos.x;
     const dy = state.fingerPos.y - state.lastFingerPos.y;
     state.fingerVelocity = Math.sqrt(dx*dx + dy*dy);
 
-    // 2. 更新刀光轨迹 (3D空间)
-    // 将屏幕 2D 转回 Z=0 的 3D 坐标用于绘制轨迹
     const vec = new THREE.Vector3(
         (state.fingerPos.x / window.innerWidth) * 2 - 1,
         -(state.fingerPos.y / window.innerHeight) * 2 + 1,
@@ -318,7 +303,7 @@ function updateInputAndCheckSlice() {
     const pos3D = camera.position.clone().add(dir.multiplyScalar(distance));
 
     state.trailPoints.unshift(pos3D);
-    if (state.trailPoints.length > MAX_TRAIL_POINTS) state.trailPoints.pop();
+    if (state.trailPoints.length > 8) state.trailPoints.pop();
 
     if (state.trailPoints.length > 1) {
         trailLine.geometry.setFromPoints(state.trailPoints);
@@ -326,48 +311,36 @@ function updateInputAndCheckSlice() {
         trailLine.visible = true;
     }
 
-    // 3. 切割检测 (仅当速度足够快时)
     if (state.fingerVelocity > config.swipeSpeedThreshold) {
         const cutDir = new THREE.Vector2(dx, dy).normalize();
-
         fruits.forEach(fruit => {
             if (!fruit.active || fruit.isSliced) return;
-
-            // 将水果 3D 坐标转为屏幕 2D 坐标进行判定
             const screenPos = fruit.mesh.position.clone().project(camera);
             const fruitX = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
             const fruitY = (-(screenPos.y * 0.5) + 0.5) * window.innerHeight;
+            
+            // 判定半径放宽一点点
+            const hitRadius = fruit.type.size * 120; 
 
-            // 简单的圆形碰撞判定
             const dist = Math.hypot(state.fingerPos.x - fruitX, state.fingerPos.y - fruitY);
-            // 判定半径根据水果大小调整 (大概 80-100像素)
-            const hitRadius = fruit.type.size * 100; 
-
             if (dist < hitRadius) {
                 fruit.slice(cutDir);
             }
         });
     }
-
-    // 更新上一帧位置
     state.lastFingerPos.copy(state.fingerPos);
 }
 
-// ================= AI 手势追踪 =================
+// ================= AI =================
 function onResults(results) {
     if (loadingText.style.display !== 'none') {
         loadingText.style.display = 'none';
         startBtn.style.display = 'block';
     }
-
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         state.hasHand = true;
-        const lm = results.multiHandLandmarks[0][8]; // 食指指尖
-        // 镜像 X 轴并映射到屏幕像素
-        state.fingerPos.set(
-            (1 - lm.x) * window.innerWidth,
-            lm.y * window.innerHeight
-        );
+        const lm = results.multiHandLandmarks[0][8]; 
+        state.fingerPos.set((1 - lm.x) * window.innerWidth, lm.y * window.innerHeight);
     } else {
         state.hasHand = false;
     }
@@ -379,11 +352,11 @@ hands.onResults(onResults);
 
 const cam = new Camera(document.getElementById('input_video'), { 
     onFrame: async () => await hands.send({image: document.getElementById('input_video')}), 
-    width: 640, height: 480 // 降低分辨率提高帧率
+    width: 640, height: 480 
 });
 cam.start();
 
-// ================= 音频与交互 =================
+// ================= Audio =================
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 function playAudio(type) {
     if(audioCtx.state === 'suspended') audioCtx.resume();
@@ -391,12 +364,10 @@ function playAudio(type) {
     const gain = audioCtx.createGain();
     osc.connect(gain); gain.connect(audioCtx.destination);
     const now = audioCtx.currentTime;
-    
     if (type === 'slice') {
-        // 短促的高频噪音模拟切开声
-        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(1200, now);
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(1000, now);
         osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
-        gain.gain.setValueAtTime(0.3, now); gain.gain.linearRampToValueAtTime(0, now + 0.1);
+        gain.gain.setValueAtTime(0.2, now); gain.gain.linearRampToValueAtTime(0, now + 0.1);
         osc.start(now); osc.stop(now + 0.1);
     }
 }
@@ -408,34 +379,22 @@ startBtn.onclick = () => {
     resetGame();
     state.isPlaying = true;
 };
-
 restartBtn.onclick = () => {
-    overlayTitle.innerText = "AR 水果忍者";
-    loadingText.style.display = 'none';
+    overlay.style.display = 'flex'; overlay.style.opacity = 1;
+    document.getElementById('game-over-content').style.display = 'none';
     startBtn.style.display = 'block';
-    gameOverContent.style.display = 'none';
-    // 这里偷懒直接触发开始，也可以回到主菜单
+    document.getElementById('overlay-title').innerText = "AR 水果忍者";
     startBtn.click();
 };
 
-// ================= 主循环 =================
 function animate() {
     requestAnimationFrame(animate);
-    
     updateInputAndCheckSlice();
-    if (state.isPlaying && !state.isGameOver) {
-        updateFruits();
-    }
-    
+    if (state.isPlaying && !state.isGameOver) updateFruits();
     renderer.render(scene, camera);
 }
 animate();
-
-window.onresize = () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-};
+window.onresize = () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
 </script>
 </body>
 </html>
