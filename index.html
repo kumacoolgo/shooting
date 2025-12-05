@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>AR 手势射击：终极版</title>
+    <style>
+        /* 移动端视口修正 */
+        body { 
+            margin: 0; overflow: hidden; background-color: #000; font-family: 'Arial', sans-serif;
+            height: 100dvh; width: 100vw; touch-action: none;
+        }
+        
+        /* 视频层：镜像翻转，保持比例填满 */
+        #input_video {
+            position: absolute; width: 100%; height: 100%; object-fit: cover;
+            transform: scaleX(-1); z-index: 0; opacity: 0.6;
+        }
+
+        /* 3D 渲染层 */
+        #output_canvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1;
+        }
+
+        /* UI HUD 层 */
+        #hud {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none;
+        }
+        
+        .score-board {
+            position: absolute; top: 30px; left: 20px; color: #00ffcc; font-size: 24px; font-weight: 800;
+            text-shadow: 0 0 10px rgba(0, 255, 204, 0.7); font-family: monospace;
+        }
+
+        /* 浮动伤害文字 */
+        .float-text {
+            position: absolute; font-weight: 900; font-size: 24px;
+            animation: floatUp 0.8s cubic-bezier(0.215, 0.610, 0.355, 1.000) forwards;
+            text-shadow: 2px 2px 0px #000;
+        }
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translateY(0) scale(0.5); }
+            50% { transform: translateY(-30px) scale(1.2); }
+            100% { opacity: 0; transform: translateY(-60px) scale(1); }
+        }
+
+        /* 遮罩与交互层 */
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #111; z-index: 999; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; color: white; transition: opacity 0.5s;
+        }
+        .spinner {
+            width: 40px; height: 40px; border: 4px solid #333; border-top: 4px solid #00ffcc;
+            border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* 开始按钮 (iOS兼容性关键) */
+        #start-btn {
+            display: none; padding: 15px 40px; background: #00ffcc; color: #000;
+            font-size: 20px; font-weight: bold; border: none; border-radius: 30px;
+            cursor: pointer; box-shadow: 0 0 20px rgba(0, 255, 204, 0.5);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+        
+        #debug-info {
+            position: absolute; bottom: 10px; right: 10px; color: rgba(255,255,255,0.3); font-size: 10px;
+        }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script src="https://unpkg.com/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/control_utils@0.6.1629159505/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/drawing_utils@0.3.1620248257/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="overlay">
+        <div class="spinner" id="spinner"></div>
+        <div id="loading-text">正在初始化 AI 视觉引擎...</div>
+        <div style="font-size: 12px; margin-top: 10px; opacity: 0.6;">首次加载可能需要 10-20 秒</div>
+        <button id="start-btn">点击开始游戏</button>
+    </div>
+
+    <video id="input_video" playsinline webkit-playsinline></video>
+    <canvas id="output_canvas"></canvas>
+    
+    <div id="hud">
+        <div class="score-board">SCORE: <span id="score">0</span></div>
+    </div>
+    <div id="debug-info">MediaPipe v0.4 (Locked)</div>
+
+<script>
+/**
+ * 配置与状态
+ */
+const config = {
+    baseSpeed: 0.02,
+    aimAssistRadius: 0.15,
+    triggerThreshold: 0.06
+};
+
+let state = {
+    score: 0,
+    isPlaying: false,
+    handDetected: false,
+    triggerState: 'open', 
+    fingerPos: new THREE.Vector2(),
+    difficultyMultiplier: 1.0
+};
+
+// DOM
+const videoElement = document.getElementById('input_video');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('start-btn');
+const spinner = document.getElementById('spinner');
+const loadingText = document.getElementById('loading-text');
+const scoreEl = document.getElementById('score');
+
+/**
+ * 1. Three.js 场景构建
+ */
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.z = 5;
+
+const renderer = new THREE.WebGLRenderer({ 
+    canvas: document.getElementById('output_canvas'), 
+    alpha: true, 
+    antialias: true,
+    powerPreference: "high-performance"
+});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+// 灯光
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+dirLight.position.set(2, 5, 5);
+scene.add(dirLight);
+
+// 对象池
+const enemies = [];
+const particles = [];
+let laserLine, reticle;
+
+// 初始化准心与激光
+function initVisuals() {
+    // 准心：双环结构
+    const ringGeo = new THREE.RingGeometry(0.12, 0.15, 32);
+    const dotGeo = new THREE.CircleGeometry(0.02, 16);
+    const material = new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.8 });
+    
+    reticle = new THREE.Group();
+    const ring = new THREE.Mesh(ringGeo, material);
+    const dot = new THREE.Mesh(dotGeo, material.clone());
+    reticle.add(ring);
+    reticle.add(dot);
+    reticle.visible = false;
+    scene.add(reticle);
+
+    // 激光
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-10)]);
+    const lineMat = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6, linewidth: 2 });
+    laserLine = new THREE.Line(lineGeo, lineMat);
+    laserLine.visible = false;
+    scene.add(laserLine);
+}
+initVisuals();
+
+/**
+ * 2. 粒子爆炸系统
+ */
+const particleGeo = new THREE.TetrahedronGeometry(0.1, 0);
+const particleMat = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true });
+
+function spawnExplosion(position, color) {
+    const count = 12; // 移动端控制粒子数量防卡顿
+    for(let i=0; i<count; i++) {
+        const mesh = new THREE.Mesh(particleGeo, particleMat.clone());
+        mesh.material.color.set(color);
+        mesh.position.copy(position);
+        
+        // 随机爆炸速度
+        mesh.userData = {
+            vel: new THREE.Vector3(
+                (Math.random() - 0.5) * 0.2,
+                (Math.random() - 0.5) * 0.2,
+                (Math.random() - 0.5) * 0.2
+            ),
+            life: 1.0
+        };
+        scene.add(mesh);
+        particles.push(mesh);
+    }
+}
+
+function updateParticles() {
+    for(let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.position.add(p.userData.vel);
+        p.rotation.x += 0.1;
+        p.rotation.y += 0.1;
+        p.userData.life -= 0.03;
+        p.material.opacity = p.userData.life;
+        
+        if(p.userData.life <= 0) {
+            scene.remove(p);
+            particles.splice(i, 1);
+        }
+    }
+}
+
+/**
+ * 3. 游戏核心逻辑
+ */
+const enemyGeo = new THREE.OctahedronGeometry(0.4); // 八面体看起来更有科技感
+const enemyMat = new THREE.MeshPhongMaterial({ color: 0xff3333, flatShading: true });
+
+function spawnEnemy() {
+    if(enemies.length >= 4) return;
+    
+    const enemy = new THREE.Mesh(enemyGeo, enemyMat.clone());
+    
+    // 屏幕外随机位置
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 6;
+    enemy.position.set(Math.cos(angle) * radius, Math.sin(angle) * radius, 0);
+    
+    // 计算向心速度，随难度增加
+    const dir = new THREE.Vector3().subVectors(new THREE.Vector3(0,0,0), enemy.position).normalize();
+    const speed = (config.baseSpeed + Math.random() * 0.02) * state.difficultyMultiplier;
+    enemy.userData = { velocity: dir.multiplyScalar(speed) };
+    
+    scene.add(enemy);
+    enemies.push(enemy);
+}
+
+function updateGameLogic() {
+    // 难度随分数线性增加
+    state.difficultyMultiplier = 1 + (state.score / 200);
+
+    // 敌人更新
+    for(let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        e.position.add(e.userData.velocity);
+        e.rotation.z += 0.05;
+        e.rotation.x += 0.05;
+
+        // 如果飞盘太靠近相机（穿模），移除并扣分
+        if(e.position.length() < 1) {
+            scene.remove(e);
+            enemies.splice(i, 1);
+            // 简单的扣分反馈
+            showFloatingText("-5", 0.5, 0.5, 'red'); // 屏幕中心
+            state.score = Math.max(0, state.score - 5);
+            scoreEl.innerText = state.score;
+        }
+    }
+    
+    // 补怪
+    if(Math.random() < 0.05 * state.difficultyMultiplier) spawnEnemy();
+    
+    updateParticles();
+}
+
+// 射击检测
+const raycaster = new THREE.Raycaster();
+function fireShot(origin) {
+    if(!state.isPlaying) return;
+    
+    playAudio('laser');
+    
+    // 激光特效
+    laserLine.geometry.setFromPoints([
+        new THREE.Vector3(origin.x + 0.5, origin.y - 0.5, 4), // 视觉上的右手位置
+        new THREE.Vector3(origin.x, origin.y, -2) // 射向远处
+    ]);
+    laserLine.visible = true;
+    setTimeout(() => laserLine.visible = false, 80);
+
+    // 碰撞检测
+    raycaster.setFromCamera(state.fingerPos, camera);
+    const intersects = raycaster.intersectObjects(enemies);
+
+    if (intersects.length > 0) {
+        const hitObj = intersects[0].object;
+        const hitPoint = intersects[0].point;
+        
+        playAudio('explosion');
+        spawnExplosion(hitObj.position, hitObj.material.color);
+        showFloatingText("HIT!", hitPoint.x, hitPoint.y, '#00ffcc');
+        
+        scene.remove(hitObj);
+        enemies.splice(enemies.indexOf(hitObj), 1);
+        
+        state.score += 10;
+        scoreEl.innerText = state.score;
+        spawnEnemy();
+    }
+}
+
+/**
+ * 4. MediaPipe AI 逻辑 (防崩溃设计)
+ */
+function onResults(results) {
+    // 首次识别成功，显示开始按钮
+    if (overlay.style.display !== 'none' && !startBtn.style.display) {
+        spinner.style.display = 'none';
+        loadingText.innerText = "AI 系统就绪";
+        startBtn.style.display = 'block';
+    }
+    
+    if(!state.isPlaying) return;
+
+    try {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            state.handDetected = true;
+            const lm = results.multiHandLandmarks[0];
+
+            // 坐标转换
+            const indexTip = lm[8];
+            const rawX = 1 - indexTip.x; 
+            const ndcX = (rawX * 2) - 1;
+            const ndcY = -(indexTip.y * 2) + 1;
+
+            // 磁吸计算
+            let targetX = ndcX, targetY = ndcY;
+            let minD = config.aimAssistRadius;
+            let locked = false;
+
+            enemies.forEach(e => {
+                const sPos = e.position.clone().project(camera);
+                const d = Math.sqrt((sPos.x - ndcX)**2 + (sPos.y - ndcY)**2);
+                if(d < minD) {
+                    minD = d;
+                    targetX = sPos.x;
+                    targetY = sPos.y;
+                    locked = true;
+                }
+            });
+
+            // 准心平滑移动
+            state.fingerPos.x += (targetX - state.fingerPos.x) * 0.5;
+            state.fingerPos.y += (targetY - state.fingerPos.y) * 0.5;
+
+            // 更新3D准心
+            const v = new THREE.Vector3(state.fingerPos.x, state.fingerPos.y, 0.5);
+            v.unproject(camera);
+            const dir = v.sub(camera.position).normalize();
+            const pos = camera.position.clone().add(dir.multiplyScalar(4)); // 距离相机4单位
+            reticle.position.copy(pos);
+            reticle.lookAt(camera.position); // 准心始终朝向相机
+            
+            // 准心颜色反馈
+            reticle.children[0].material.color.setHex(locked ? 0xff0000 : 0x00ffcc);
+            reticle.visible = true;
+
+            // 触发判定 (拇指尖 dist 食指根)
+            const thumbTip = lm[4];
+            const indexBase = lm[5];
+            const dist = Math.hypot(thumbTip.x - indexBase.x, thumbTip.y - indexBase.y);
+
+            if (dist < config.triggerThreshold) {
+                if (state.triggerState === 'open') {
+                    state.triggerState = 'closed';
+                    reticle.scale.set(1.5, 1.5, 1.5); // 视觉反馈
+                    fireShot(pos);
+                }
+            } else if (dist > config.triggerThreshold * 1.4) {
+                state.triggerState = 'open';
+                reticle.scale.set(1, 1, 1);
+            }
+
+        } else {
+            state.handDetected = false;
+            reticle.visible = false;
+        }
+    } catch (e) { console.error(e); }
+}
+
+// MediaPipe 初始化
+const hands = new Hands({locateFile: (file) => {
+    return `https://unpkg.com/@mediapipe/hands@0.4.1646424915/${file}`;
+}});
+hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1, // 0:Lite (更快), 1:Full (更准)。现代手机通常可以用 1
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+});
+hands.onResults(onResults);
+
+// 相机启动
+const cam = new Camera(videoElement, {
+    onFrame: async () => {
+        await hands.send({image: videoElement});
+    },
+    width: 1280,
+    height: 720
+});
+cam.start();
+
+/**
+ * 5. 音频系统 (合成器)
+ */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playAudio(type) {
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+    
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    
+    const now = audioCtx.currentTime;
+    
+    if(type === 'laser') {
+        osc.frequency.setValueAtTime(800, now);
+        osc.frequency.exponentialRampToValueAtTime(100, now + 0.15);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+        osc.start(now);
+        osc.stop(now + 0.15);
+    } else if(type === 'explosion') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(100, now);
+        osc.frequency.exponentialRampToValueAtTime(30, now + 0.2);
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+    }
+}
+
+// UI 逻辑：开始游戏
+startBtn.addEventListener('click', () => {
+    audioCtx.resume().then(() => {
+        overlay.style.opacity = 0;
+        setTimeout(() => overlay.style.display = 'none', 500);
+        state.isPlaying = true;
+        // 预生成敌人
+        spawnEnemy();
+        spawnEnemy();
+    });
+});
+
+function showFloatingText(text, x, y, color) {
+    const div = document.createElement('div');
+    div.className = 'float-text';
+    div.innerText = text;
+    div.style.color = color;
+    
+    // 3D 转 屏幕坐标 (如果传入的是3D坐标需要project，如果是NDC需要转换)
+    // 此处简化：如果传入的是 NDC (0-1范围)
+    if(Math.abs(x) <= 1 && Math.abs(y) <= 1) { // 简单判定
+        // 将 NDC 转为屏幕 px
+        const vector = new THREE.Vector3(x, y, 0); // 这里的 x,y 已经是 NDC 了吗？
+        // 如果是从 Raycaster 来的点，是 World 坐标
+    } 
+    
+    // 修正逻辑：传入 World 坐标
+    const v = new THREE.Vector3(x, y, 0);
+    v.project(camera);
+    
+    div.style.left = ((v.x + 1) / 2 * window.innerWidth) + 'px';
+    div.style.top = (-(v.y - 1) / 2 * window.innerHeight) + 'px';
+    
+    document.getElementById('hud').appendChild(div);
+    setTimeout(() => div.remove(), 800);
+}
+
+// 渲染循环
+function animate() {
+    requestAnimationFrame(animate);
+    if(state.isPlaying) {
+        updateGameLogic();
+    }
+    renderer.render(scene, camera);
+}
+animate();
+
+// 窗口适配
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
