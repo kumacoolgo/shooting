@@ -3,21 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>AR 射击：必中修复版</title>
+    <title>AR 射击：爽快判定版</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; height: 100dvh; width: 100vw; touch-action: none; font-family: 'Arial', sans-serif; }
-        #input_video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 0; opacity: 0.6; }
-        #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-        #hud { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
-        .score-board { position: absolute; top: 30px; left: 20px; color: #00ffcc; font-size: 28px; font-weight: 900; text-shadow: 0 0 10px #00ffcc; font-family: monospace; }
-        .float-text { position: absolute; font-weight: 900; font-size: 24px; animation: floatUp 0.6s ease-out forwards; text-shadow: 2px 2px 0px #000; z-index: 10; }
-        @keyframes floatUp { 0% { opacity: 1; transform: translateY(0) scale(0.8); } 100% { opacity: 0; transform: translateY(-50px) scale(1.2); } }
+        body { 
+            margin: 0; overflow: hidden; background-color: #000; 
+            height: 100dvh; width: 100vw; touch-action: none; 
+            font-family: 'Arial', sans-serif; 
+        }
         
-        /* 遮罩 */
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 999; display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; transition: opacity 0.5s; }
-        .spinner { width: 40px; height: 40px; border: 4px solid #333; border-top: 4px solid #00ffcc; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        /* 视频层 */
+        #input_video { 
+            position: absolute; width: 100%; height: 100%; 
+            object-fit: cover; transform: scaleX(-1); 
+            z-index: 0; opacity: 0.6; filter: brightness(0.8);
+        }
+
+        /* 3D 渲染层 */
+        #output_canvas { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; 
+        }
+
+        /* UI HUD 层 */
+        #hud { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            z-index: 2; pointer-events: none; 
+        }
+        
+        /* 伤害闪红层 */
+        #damage-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, transparent 50%, rgba(255,0,0,0.6) 100%);
+            opacity: 0; pointer-events: none; z-index: 3;
+            transition: opacity 0.1s;
+        }
+
+        .score-board { 
+            position: absolute; top: 30px; left: 20px; 
+            color: #fff; font-size: 24px; font-weight: 900; 
+            text-shadow: 0 0 5px #00ffcc, 2px 2px 0 #000; 
+            font-family: 'Courier New', monospace;
+        }
+
+        .float-text { 
+            position: absolute; font-weight: 900; font-size: 28px; 
+            animation: floatUp 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; 
+            text-shadow: 2px 2px 0px #000; pointer-events: none;
+        }
+        @keyframes floatUp { 
+            0% { opacity: 1; transform: translateY(0) scale(0.5); } 
+            50% { transform: translateY(-30px) scale(1.2); } 
+            100% { opacity: 0; transform: translateY(-60px) scale(1); } 
+        }
+        
+        /* 加载与开始界面 */
+        #overlay { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            background: #111; z-index: 999; display: flex; 
+            flex-direction: column; justify-content: center; align-items: center; 
+            color: white; transition: opacity 0.5s; 
+        }
+        .spinner { 
+            width: 40px; height: 40px; border: 4px solid #333; 
+            border-top: 4px solid #00ffcc; border-radius: 50%; 
+            animation: spin 1s linear infinite; margin-bottom: 20px; 
+        }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        #start-btn { display: none; padding: 15px 50px; background: #00ffcc; color: #000; font-size: 20px; font-weight: bold; border: none; border-radius: 30px; animation: pulse 1.5s infinite; }
+        
+        #start-btn { 
+            display: none; padding: 15px 60px; 
+            background: linear-gradient(45deg, #00ffcc, #00ccff); 
+            color: #000; font-size: 20px; font-weight: bold; 
+            border: none; border-radius: 50px; cursor: pointer;
+            box-shadow: 0 0 20px rgba(0, 255, 204, 0.4);
+            animation: pulse 2s infinite; 
+        }
         @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
     </style>
 
@@ -28,191 +87,323 @@
     <script src="https://unpkg.com/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
+
+    <div id="damage-overlay"></div>
+    
     <div id="overlay">
         <div class="spinner" id="spinner"></div>
-        <div id="loading-text">正在初始化 AI...</div>
-        <button id="start-btn">点击开始</button>
+        <div id="loading-text">正在校准 AI 视觉...</div>
+        <button id="start-btn">点击开始战斗</button>
+        <div style="margin-top:20px; font-size: 12px; opacity: 0.6">提示：食指瞄准，捏合大拇指射击</div>
     </div>
+
     <video id="input_video" playsinline webkit-playsinline></video>
     <canvas id="output_canvas"></canvas>
-    <div id="hud"><div class="score-board">SCORE: <span id="score">0</span></div></div>
+    
+    <div id="hud">
+        <div class="score-board">SCORE: <span id="score">0</span></div>
+    </div>
 
 <script>
-const config = { baseSpeed: 0.02, aimRadius: 0.15, triggerDist: 0.06 };
-let state = { score: 0, isPlaying: false, handDetected: false, triggerState: 'open', fingerPos: new THREE.Vector2(), lockedEnemy: null };
+// ================= 全局配置 =================
+const config = {
+    triggerThreshold: 0.08, // 捏合触发距离 (0-1)
+    lockRadiusPx: 80,       // 屏幕判定半径 (像素)，越大越好打
+    enemySpeed: 0.02
+};
 
-// DOM
-const overlay = document.getElementById('overlay');
-const startBtn = document.getElementById('start-btn');
+let state = {
+    score: 0,
+    isPlaying: false,
+    handPos: { x: 0, y: 0 }, // 屏幕坐标像素
+    pinchStrength: 0,        // 0 (张开) -> 1 (捏合)
+    lockedTarget: null       // 当前锁定的敌人对象
+};
+
+// DOM 引用
 const scoreEl = document.getElementById('score');
+const damageOverlay = document.getElementById('damage-overlay');
 
-// Three.js
+// ================= 1. 场景与视觉系统 =================
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
 camera.position.z = 5;
-const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('output_canvas'), alpha: true, antialias: true });
+
+const renderer = new THREE.WebGLRenderer({ 
+    canvas: document.getElementById('output_canvas'), 
+    alpha: true, 
+    antialias: true 
+});
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-const light = new THREE.DirectionalLight(0xffffff, 1);
-light.position.set(2, 5, 5);
-scene.add(light);
+// 灯光
+const ambLight = new THREE.AmbientLight(0xffffff, 0.8);
+scene.add(ambLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+dirLight.position.set(2, 5, 5);
+scene.add(dirLight);
 
-// 资源
-const enemies = [];
-let laserLine, reticle;
-const raycaster = new THREE.Raycaster();
+// --- 准心系统 (核心 UX 优化) ---
+let reticleGroup, reticleRing, reticleDot, pinchRing;
 
-function initVisuals() {
-    // 准心
-    const rGeo = new THREE.RingGeometry(0.12, 0.15, 32);
-    const mat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.8 });
-    reticle = new THREE.Group();
-    reticle.add(new THREE.Mesh(rGeo, mat));
-    reticle.add(new THREE.Mesh(new THREE.CircleGeometry(0.02, 16), mat.clone()));
-    reticle.visible = false;
-    scene.add(reticle);
+function initReticle() {
+    reticleGroup = new THREE.Group();
+    
+    // 中心点
+    reticleDot = new THREE.Mesh(
+        new THREE.CircleGeometry(0.03, 16),
+        new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.9 })
+    );
+    
+    // 锁定框 (方形更像科幻HUD)
+    reticleRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.15, 0.16, 4),
+        new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.5 })
+    );
+    reticleRing.rotation.z = Math.PI / 4; // 菱形
 
-    // 激光
-    const lGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0,0,-10)]);
-    laserLine = new THREE.Line(lGeo, new THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 2, transparent: true, opacity: 0.6 }));
+    // 捏合力度指示器 (圆形)
+    pinchRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.2, 0.22, 32),
+        new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.8 })
+    );
+
+    reticleGroup.add(reticleDot);
+    reticleGroup.add(reticleRing);
+    reticleGroup.add(pinchRing);
+    reticleGroup.visible = false;
+    scene.add(reticleGroup);
+}
+initReticle();
+
+// --- 激光特效 ---
+let laserLine;
+function initLaser() {
+    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0,0,-1)]);
+    const mat = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8, linewidth: 2 });
+    laserLine = new THREE.Line(geo, mat);
     laserLine.visible = false;
     scene.add(laserLine);
 }
-initVisuals();
+initLaser();
 
-// 游戏逻辑
-const enemyGeo = new THREE.OctahedronGeometry(0.5);
-const enemyMat = new THREE.MeshPhongMaterial({ color: 0xff3333 });
+// ================= 2. 游戏对象管理 =================
+const enemies = [];
+const enemyGeo = new THREE.OctahedronGeometry(0.5, 0);
+const enemyMat = new THREE.MeshPhongMaterial({ color: 0xff3333, flatShading: true });
 
 function spawnEnemy() {
-    if(enemies.length >= 4) return;
-    const e = new THREE.Mesh(enemyGeo, enemyMat.clone());
+    if (enemies.length >= 5) return;
+    
+    const enemy = new THREE.Mesh(enemyGeo, enemyMat.clone());
+    // 随机屏幕边缘生成
     const angle = Math.random() * Math.PI * 2;
-    e.position.set(Math.cos(angle)*6, Math.sin(angle)*6, 0);
-    e.userData.velocity = e.position.clone().normalize().multiplyScalar(-config.baseSpeed * (1 + state.score/200));
-    scene.add(e);
-    enemies.push(e);
+    const r = 7; // 生成半径
+    enemy.position.set(Math.cos(angle)*r, Math.sin(angle)*r, 0);
+    
+    // 计算速度：始终飞向 (0,0,0) 即玩家
+    const dir = new THREE.Vector3(0,0,0).sub(enemy.position).normalize();
+    enemy.userData = { 
+        velocity: dir.multiplyScalar(config.enemySpeed * (1 + state.score/100)),
+        rotateSpeed: (Math.random()-0.5) * 0.2
+    };
+    
+    scene.add(enemy);
+    enemies.push(enemy);
 }
 
-// 核心修复：射击判定
-function fireShot(origin) {
-    if(!state.isPlaying) return;
-    playAudio('laser');
+// 玩家受到伤害
+function takeDamage() {
+    playAudio('damage');
     
-    // 激光特效
-    laserLine.geometry.setFromPoints([
-        new THREE.Vector3(origin.x + 0.3, origin.y - 0.5, 4), // 右手模拟位置
-        new THREE.Vector3(origin.x, origin.y, -5) // 射向远处
-    ]);
-    laserLine.visible = true;
-    setTimeout(() => laserLine.visible = false, 80);
+    // 视觉震撼：屏幕闪红
+    damageOverlay.style.opacity = 1;
+    setTimeout(() => damageOverlay.style.opacity = 0, 300);
+    
+    // 扣分
+    state.score = Math.max(0, state.score - 5);
+    scoreEl.innerText = state.score;
+    showFloatingText("警告!!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+}
 
-    let hitObj = null;
+function updateGame() {
+    if (!state.isPlaying) return;
 
-    // 1. 优先判定：是否有“磁吸锁定”的敌人 (必中逻辑)
-    if (state.lockedEnemy) {
-        hitObj = state.lockedEnemy;
-    } 
-    // 2. 备用判定：如果没有锁定，才用射线检测 (盲射)
-    else {
-        raycaster.setFromCamera(state.fingerPos, camera);
-        const intersects = raycaster.intersectObjects(enemies);
-        if (intersects.length > 0) hitObj = intersects[0].object;
+    // 更新敌人位置
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        e.position.add(e.userData.velocity);
+        e.rotation.x += e.userData.rotateSpeed;
+        e.rotation.z += e.userData.rotateSpeed;
+
+        // 判定撞击玩家 (距离原点 < 1)
+        if (e.position.length() < 1.0) {
+            scene.remove(e);
+            enemies.splice(i, 1);
+            takeDamage(); // 触发伤害逻辑
+        }
     }
+    
+    // 自动补怪
+    if (Math.random() < 0.03) spawnEnemy();
+}
 
-    if (hitObj) {
-        playAudio('explosion');
-        showFloatingText("HIT!", hitObj.position);
+// ================= 3. 核心交互：屏幕空间判定 =================
+
+// 将 3D 坐标转为屏幕像素坐标
+function toScreenPosition(obj, camera) {
+    const vector = new THREE.Vector3();
+    obj.getWorldPosition(vector);
+    vector.project(camera);
+    
+    const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight;
+    return { x, y };
+}
+
+function checkLockOn() {
+    let closestDist = config.lockRadiusPx; // 初始最大锁定范围
+    let target = null;
+
+    // 遍历所有敌人，计算屏幕距离
+    enemies.forEach(enemy => {
+        const screenPos = toScreenPosition(enemy, camera);
         
-        // 移除敌人
-        scene.remove(hitObj);
-        enemies.splice(enemies.indexOf(hitObj), 1);
-        
-        state.score += 10;
-        scoreEl.innerText = state.score;
-        spawnEnemy();
+        // 计算手指与敌人的 2D 像素距离
+        const dx = screenPos.x - state.handPos.x;
+        const dy = screenPos.y - state.handPos.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+
+        if (dist < closestDist) {
+            closestDist = dist;
+            target = enemy;
+        }
+    });
+
+    state.lockedTarget = target;
+    
+    // UI 反馈：如果锁定，准心变红并放大
+    if (state.lockedTarget) {
+        reticleRing.material.color.setHex(0xff0000);
+        reticleRing.scale.set(1.5, 1.5, 1.5); // 放大锁定框
+        reticleRing.rotation.z += 0.1; // 旋转特效
+    } else {
+        reticleRing.material.color.setHex(0x00ffcc);
+        reticleRing.scale.set(1, 1, 1);
     }
 }
 
-// AI 循环
-function onResults(results) {
-    if (overlay.style.display !== 'none' && !startBtn.style.display) {
-        document.getElementById('spinner').style.display = 'none';
-        document.getElementById('loading-text').innerText = "AI 就绪";
-        startBtn.style.display = 'block';
-    }
-    
-    if(!state.isPlaying) return;
-
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        state.handDetected = true;
-        const lm = results.multiHandLandmarks[0];
+function tryShoot() {
+    // 只有在捏合且有锁定时才触发
+    if (state.pinchStrength > 0.8) {
+        // 视觉反馈：捏合指示圈收缩
+        pinchRing.scale.set(0.1, 0.1, 0.1);
+        pinchRing.material.color.setHex(0xff0000);
         
-        // 坐标计算
-        const idx = lm[8]; // 食指
-        const ndcX = (1 - idx.x) * 2 - 1;
-        const ndcY = (1 - idx.y) * 2 - 1; // 修正Y轴翻转问题
+        if (state.lockedTarget) {
+            // 命中逻辑
+            playAudio('shoot');
+            playAudio('hit');
+            
+            // 激光特效
+            const startPos = reticleGroup.position.clone().add(new THREE.Vector3(0.5, -0.5, 1)); // 模拟右手发出
+            const endPos = state.lockedTarget.position.clone();
+            laserLine.geometry.setFromPoints([startPos, endPos]);
+            laserLine.visible = true;
+            setTimeout(() => laserLine.visible = false, 80);
 
-        // 磁吸寻找最近敌人
-        let targetX = ndcX, targetY = ndcY;
-        let minD = config.aimRadius;
-        state.lockedEnemy = null; // 重置锁定状态
-
-        enemies.forEach(e => {
-            const sPos = e.position.clone().project(camera);
-            const d = Math.sqrt((sPos.x - ndcX)**2 + (sPos.y - ndcY)**2);
-            if(d < minD) {
-                minD = d;
-                targetX = sPos.x;
-                targetY = sPos.y;
-                state.lockedEnemy = e; // 【关键】保存被锁定的敌人对象
-            }
-        });
-
-        // 准心平滑
-        state.fingerPos.x += (targetX - state.fingerPos.x) * 0.5;
-        state.fingerPos.y += (targetY - state.fingerPos.y) * 0.5;
-
-        // 更新 3D 准心
-        const v = new THREE.Vector3(state.fingerPos.x, state.fingerPos.y, 0.5);
-        v.unproject(camera);
-        const dir = v.sub(camera.position).normalize();
-        const pos = camera.position.clone().add(dir.multiplyScalar(4));
-        reticle.position.copy(pos);
-        reticle.lookAt(camera.position);
-        reticle.visible = true;
-
-        // 颜色反馈
-        reticle.children[0].material.color.setHex(state.lockedEnemy ? 0xff0000 : 0x00ffcc);
-
-        // 触发逻辑
-        const dist = Math.hypot(lm[4].x - lm[5].x, lm[4].y - lm[5].y);
-        if (dist < config.triggerDist) {
-            if (state.triggerState === 'open') {
-                state.triggerState = 'closed';
-                reticle.scale.set(1.5, 1.5, 1.5);
-                fireShot(pos);
-            }
-        } else if (dist > config.triggerDist * 1.4) {
-            state.triggerState = 'open';
-            reticle.scale.set(1, 1, 1);
+            // 销毁敌人
+            showFloatingText("HIT!", state.handPos.x, state.handPos.y, '#00ff00');
+            scene.remove(state.lockedTarget);
+            enemies.splice(enemies.indexOf(state.lockedTarget), 1);
+            state.lockedTarget = null;
+            
+            state.score += 10;
+            scoreEl.innerText = state.score;
+            spawnEnemy(); // 立即补位
+            
+            // 强制重置捏合状态防止连发过快
+            state.pinchStrength = 0; 
+        } else {
+            // 空枪
+            // playAudio('shoot'); 
         }
     } else {
-        reticle.visible = false;
-        state.lockedEnemy = null;
+        // 张开状态，圆圈变大
+        const s = 1.0 - state.pinchStrength * 0.8; // 1.0 -> 0.2
+        pinchRing.scale.set(s, s, s);
+        pinchRing.material.color.setHex(0xffff00);
     }
 }
 
-// MediaPipe Setup
+// ================= 4. MediaPipe AI 处理 =================
+function onResults(results) {
+    if (document.getElementById('overlay').style.display !== 'none' && !document.getElementById('start-btn').style.display) {
+        document.getElementById('spinner').style.display = 'none';
+        document.getElementById('loading-text').innerText = "系统就绪";
+        document.getElementById('start-btn').style.display = 'block';
+    }
+    
+    if (!state.isPlaying) return;
+
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const lm = results.multiHandLandmarks[0];
+        
+        // 1. 获取食指指尖 (瞄准点)
+        const indexTip = lm[8];
+        // 转换 X 轴 (镜像)
+        const x = (1 - indexTip.x) * window.innerWidth;
+        const y = indexTip.y * window.innerHeight;
+        
+        // 平滑移动 (Lerp)
+        state.handPos.x += (x - state.handPos.x) * 0.6;
+        state.handPos.y += (y - state.handPos.y) * 0.6;
+
+        // 2. 更新 3D 准心位置 (投影到摄像机前方)
+        const vector = new THREE.Vector3(
+            (state.handPos.x / window.innerWidth) * 2 - 1,
+            -(state.handPos.y / window.innerHeight) * 2 + 1,
+            0.5
+        );
+        vector.unproject(camera);
+        const dir = vector.sub(camera.position).normalize();
+        const pos = camera.position.clone().add(dir.multiplyScalar(4)); // 距离相机 4 米
+        reticleGroup.position.copy(pos);
+        reticleGroup.lookAt(camera.position);
+        reticleGroup.visible = true;
+
+        // 3. 计算捏合力度 (0 - 1)
+        const thumbTip = lm[4];
+        const indexBase = lm[5];
+        // 计算归一化距离
+        const dist = Math.hypot(thumbTip.x - indexBase.x, thumbTip.y - indexBase.y);
+        // 映射：0.15 (张开) -> 0.05 (闭合)
+        const rawPinch = Math.max(0, Math.min(1, (0.15 - dist) / (0.15 - 0.05)));
+        state.pinchStrength = rawPinch;
+
+        // 4. 执行游戏逻辑
+        checkLockOn(); // 检查是否瞄准
+        tryShoot();    // 检查是否射击
+
+    } else {
+        reticleGroup.visible = false;
+        state.pinchStrength = 0;
+    }
+}
+
+// ================= 5. 辅助系统 =================
 const hands = new Hands({locateFile: f => `https://unpkg.com/@mediapipe/hands@0.4.1646424915/${f}`});
 hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 hands.onResults(onResults);
-const cam = new Camera(document.getElementById('input_video'), { onFrame: async () => await hands.send({image: document.getElementById('input_video')}), width: 640, height: 480 }); // 降分辨率提速
+
+const cam = new Camera(document.getElementById('input_video'), { 
+    onFrame: async () => await hands.send({image: document.getElementById('input_video')}), 
+    width: 640, height: 480 
+});
 cam.start();
 
-// 辅助
+// 音频
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 function playAudio(type) {
     if(audioCtx.state === 'suspended') audioCtx.resume();
@@ -221,64 +412,64 @@ function playAudio(type) {
     osc.connect(gain);
     gain.connect(audioCtx.destination);
     const now = audioCtx.currentTime;
-    if(type === 'laser') {
-        osc.frequency.setValueAtTime(600, now);
+    
+    if (type === 'shoot') {
+        osc.frequency.setValueAtTime(800, now);
         osc.frequency.exponentialRampToValueAtTime(100, now+0.1);
-        gain.gain.setValueAtTime(0.1, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now+0.1);
-        osc.start(now); osc.stop(now+0.1);
-    } else {
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(100, now);
-        osc.frequency.exponentialRampToValueAtTime(10, now+0.2);
         gain.gain.setValueAtTime(0.2, now);
-        gain.gain.linearRampToValueAtTime(0, now+0.2);
-        osc.start(now); osc.stop(now+0.2);
+        gain.gain.linearRampToValueAtTime(0, now+0.1);
+        osc.start(now); osc.stop(now+0.1);
+    } else if (type === 'hit') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(1500, now);
+        osc.frequency.exponentialRampToValueAtTime(2000, now+0.1);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.linearRampToValueAtTime(0, now+0.15);
+        osc.start(now); osc.stop(now+0.15);
+    } else if (type === 'damage') {
+        osc.type = 'sawtooth'; // 刺耳的声音
+        osc.frequency.setValueAtTime(100, now);
+        osc.frequency.linearRampToValueAtTime(50, now+0.3);
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.linearRampToValueAtTime(0, now+0.3);
+        osc.start(now); osc.stop(now+0.3);
     }
 }
 
-function showFloatingText(text, pos) {
+// 浮动文字
+function showFloatingText(text, x, y, color) {
     const div = document.createElement('div');
     div.innerText = text;
     div.className = 'float-text';
-    div.style.color = '#00ffcc';
-    
-    // 正确的 3D -> 2D 转换
-    const tempV = pos.clone().project(camera);
-    const x = (tempV.x * .5 + .5) * window.innerWidth;
-    const y = (-(tempV.y * .5) + .5) * window.innerHeight;
-    
+    div.style.color = color;
     div.style.left = x + 'px';
     div.style.top = y + 'px';
-    document.getElementById('hud').appendChild(div);
+    document.body.appendChild(div);
     setTimeout(() => div.remove(), 600);
 }
 
-startBtn.onclick = () => {
+// 事件绑定
+document.getElementById('start-btn').addEventListener('click', () => {
     audioCtx.resume();
-    overlay.style.opacity = 0;
-    setTimeout(() => overlay.style.display='none', 500);
+    document.getElementById('overlay').style.opacity = 0;
+    setTimeout(() => document.getElementById('overlay').style.display='none', 500);
     state.isPlaying = true;
     spawnEnemy(); spawnEnemy();
-};
+});
 
+// 渲染循环
 function animate() {
     requestAnimationFrame(animate);
-    if(state.isPlaying) {
-        for(let i=enemies.length-1; i>=0; i--) {
-            enemies[i].position.add(enemies[i].userData.velocity);
-            enemies[i].rotation.x += 0.05; enemies[i].rotation.z += 0.05;
-            if(enemies[i].position.length() < 1) { // 撞脸扣分
-                scene.remove(enemies[i]); enemies.splice(i,1);
-                state.score = Math.max(0, state.score-5); scoreEl.innerText = state.score;
-            }
-        }
-        if(Math.random()<0.03) spawnEnemy();
-    }
+    updateGame();
     renderer.render(scene, camera);
 }
 animate();
-window.onresize = () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
+
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
 </script>
 </body>
 </html>
