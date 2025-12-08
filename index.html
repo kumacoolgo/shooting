@@ -2,427 +2,594 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>AR 忍者：30秒竞速</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D 圣诞交互粒子系统</title>
     <style>
-        body { 
-            margin: 0; overflow: hidden; background-color: #000; 
-            height: 100dvh; width: 100vw; touch-action: none; 
-            font-family: 'Arial', sans-serif; user-select: none;
+        body { margin: 0; overflow: hidden; background-color: #050510; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            pointer-events: none;
         }
-        #input_video { 
-            position: absolute; width: 100%; height: 100%; 
-            object-fit: cover; transform: scaleX(-1); 
-            z-index: 0; opacity: 0.8; filter: saturate(1.2);
+        .control-btn {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-size: 14px;
+            pointer-events: auto;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: fit-content;
         }
-        #output_canvas { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; 
+        .control-btn:hover { background: rgba(255, 255, 255, 0.25); box-shadow: 0 0 15px rgba(255, 255, 255, 0.3); }
+        #camera-feed {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 160px;
+            height: 120px;
+            border-radius: 12px;
+            transform: scaleX(-1);
+            opacity: 0.7;
+            border: 2px solid rgba(255,255,255,0.3);
+            z-index: 5;
+            object-fit: cover;
         }
-        #hud { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            z-index: 2; pointer-events: none; 
+        #file-input { display: none; }
+        .instruction {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+            text-align: center;
+            pointer-events: none;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
         }
-        .score-board { 
-            position: absolute; top: 20px; left: 20px; 
-            color: #fff; font-size: 28px; font-weight: 900; 
-            text-shadow: 2px 2px 0 #000, 0 0 10px #ff9900; 
-            font-family: monospace;
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
         }
-        /* 倒计时样式 */
-        .timer {
-            position: absolute; top: 20px; right: 20px;
-            color: #fff; font-size: 32px; font-weight: bold;
-            text-shadow: 2px 2px 0 #000; font-family: monospace;
-        }
-        .timer.warning { color: #ff3333; animation: blink 0.5s infinite; }
-        @keyframes blink { 0% {opacity: 1;} 50% {opacity: 0.5;} 100% {opacity: 1;} }
-
-        /* 界面 */
-        #overlay { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            background: rgba(0,0,0,0.85); z-index: 999; display: flex; 
-            flex-direction: column; justify-content: center; align-items: center; 
-            color: white; transition: opacity 0.3s; 
-        }
-        #start-btn, #restart-btn { 
-            padding: 15px 50px; background: linear-gradient(to bottom, #ffcc00, #ff9900); 
-            color: #000; font-size: 22px; font-weight: bold; border: none; border-radius: 8px; 
-            cursor: pointer; box-shadow: 0 5px #cc6600; margin-top: 20px;
-        }
-        #start-btn:active { transform: translateY(3px); box-shadow: 0 2px #cc6600; }
-        h1 { margin: 0; font-style: italic; color: #ffcc00; text-shadow: 2px 2px #ff0000; font-size: 40px; }
-        
-        /* 加分特效文字 */
-        .float-score {
-            position: absolute; color: #ffeb3b; font-weight: bold; font-size: 30px;
-            animation: floatUp 0.8s ease-out forwards; text-shadow: 2px 2px 0 #000; pointer-events: none;
-        }
-        @keyframes floatUp { 0% {transform:translateY(0) scale(1); opacity:1;} 100% {transform:translateY(-50px) scale(1.5); opacity:0;} }
     </style>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
-    <div id="overlay">
-        <h1 id="overlay-title">30秒切水果</h1>
-        <div id="loading-text" style="margin-top: 20px;">正在准备刀具 (AI Loading)...</div>
-        <button id="start-btn" style="display:none;">开始挑战</button>
-        
-        <div id="result-panel" style="display:none; text-align: center;">
-            <h2 style="font-size: 30px; margin-bottom: 10px;">时间到!</h2>
-            <div style="font-size: 40px; color: #ffcc00; font-weight: bold;" id="final-score">0</div>
-            <p style="color: #aaa; margin-top: 5px;">本局得分</p>
-            <button id="restart-btn">再试一次</button>
-        </div>
+    <div id="loading">正在初始化视觉引擎与摄像头...</div>
+
+    <div id="ui-container">
+        <button class="control-btn" id="upload-btn">🎁 插入照片</button>
+        <button class="control-btn" id="fullscreen-btn">⛶ 全屏模式</button>
+        <input type="file" id="file-input" accept="image/*" multiple>
     </div>
 
-    <video id="input_video" playsinline webkit-playsinline></video>
-    <canvas id="output_canvas"></canvas>
-    
-    <div id="hud">
-        <div class="score-board">SCORE: <span id="score">0</span></div>
-        <div class="timer" id="timer">30.00</div>
+    <div class="instruction">
+        🖐 张开: 旋转散开 | ✊ 握拳: 聚合成树 | 👌 捏合: 抓取照片
     </div>
 
-<script>
-// ================= 核心配置 =================
-const config = {
-    gameDuration: 30, // 游戏时长(秒)
-    gravity: -0.012,  // 重力适中，配合高初速度
-    spawnRate: 0.04,  // 刷怪频率 (稍微快一点，因为是限时模式)
-    swipeSpeed: 10    // 切割速度阈值
-};
+    <video id="camera-feed" playsinline muted autoplay></video>
 
-let state = {
-    score: 0,
-    startTime: 0,
-    timeLeft: config.gameDuration,
-    isPlaying: false,
-    isGameOver: false,
-    // 手部数据
-    fingerPos: new THREE.Vector2(),
-    lastFingerPos: new THREE.Vector2(),
-    fingerVelocity: 0,
-    hasHand: false,
-    trailPoints: []
-};
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
 
-// DOM
-const scoreEl = document.getElementById('score');
-const timerEl = document.getElementById('timer');
-const overlay = document.getElementById('overlay');
-const startBtn = document.getElementById('start-btn');
-const restartBtn = document.getElementById('restart-btn');
-const resultPanel = document.getElementById('result-panel');
-const titleEl = document.getElementById('overlay-title');
-const loadingText = document.getElementById('loading-text');
-
-// ================= Three.js 场景 =================
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.z = 18; // 相机距离
-
-const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('output_canvas'), alpha: true, antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
-dirLight.position.set(5, 10, 7);
-scene.add(dirLight);
-
-// ================= 游戏逻辑：水果 =================
-let fruits = [];
-let slicedParts = [];
-
-const fruitTypes = [
-    { color: 0xff9900, size: 0.9, score: 10 },
-    { color: 0xff3333, size: 0.8, score: 15 },
-    { color: 0xffff00, size: 1.0, score: 20 },
-    { color: 0x4caf50, size: 1.2, score: 50 }, // 西瓜(绿) - 分数高
-    { color: 0x9c27b0, size: 0.7, score: 30 }  // 李子(紫) - 小而高分
-];
-
-const wholeGeo = new THREE.SphereGeometry(1, 16, 16);
-const halfGeo = new THREE.SphereGeometry(1, 16, 8, 0, Math.PI);
-
-class Fruit {
-    constructor() {
-        this.mesh = new THREE.Mesh(wholeGeo, new THREE.MeshPhongMaterial({ shininess: 30 }));
-        this.reset();
-        scene.add(this.mesh);
-    }
-
-    reset() {
-        this.active = true;
-        this.isSliced = false;
-        this.mesh.visible = true;
+    <script>
+        // --- 1. 初始化 Three.js 场景 ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050510, 0.002);
         
-        // 随机属性
-        this.type = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
-        this.mesh.material.color.setHex(this.type.color);
-        this.mesh.scale.setScalar(this.type.size);
-        
-        // 【关键位置调整】从更深的地方生成 (-15)
-        const startX = (Math.random() - 0.5) * 12; // 左右范围稍微收窄，防止飞出屏幕左右太远
-        this.mesh.position.set(startX, -15, 0);
-        
-        // 【关键力度调整】加大力度！
-        // Y轴速度 0.65 ~ 0.85 (之前是 0.3~0.5)
-        // 这样可以确保飞到屏幕上沿
-        this.velocity = new THREE.Vector3(
-            (Math.random() - 0.5) * 0.4, // X轴
-            0.65 + Math.random() * 0.20, // Y轴 (大力出奇迹)
-            0
-        );
-        
-        this.rotSpeed = new THREE.Vector3(Math.random()*0.2, Math.random()*0.2, 0);
-    }
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 30;
+        camera.position.y = 10;
 
-    update() {
-        if (!this.active) return;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 移动端优化
+        document.body.appendChild(renderer.domElement);
+
+        // 灯光
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+        scene.add(ambientLight);
+
+        // 树顶灯泡 (点光源)
+        const topperLight = new THREE.PointLight(0xffaa00, 2, 50);
+        topperLight.position.set(0, 22, 0);
+        scene.add(topperLight);
         
-        this.velocity.y += config.gravity;
-        this.mesh.position.add(this.velocity);
-        this.mesh.rotation.x += this.rotSpeed.x;
-        this.mesh.rotation.y += this.rotSpeed.y;
+        // 树顶装饰
+        const topperGeo = new THREE.SphereGeometry(1, 32, 32);
+        const topperMat = new THREE.MeshStandardMaterial({ 
+            color: 0xffdd00, 
+            emissive: 0xffaa00,
+            emissiveIntensity: 1,
+            roughness: 0.2,
+            metalness: 0.8
+        });
+        const topperMesh = new THREE.Mesh(topperGeo, topperMat);
+        topperMesh.position.set(0, 22, 0);
+        scene.add(topperMesh);
 
-        // 掉出屏幕底部回收
-        if (this.mesh.position.y < -16) {
-            this.active = false;
-            this.mesh.visible = false;
-        }
-    }
-
-    slice(dir) {
-        if (this.isSliced) return;
-        this.isSliced = true;
-        this.mesh.visible = false;
-        this.active = false;
+        // --- 2. 粒子系统核心逻辑 ---
         
-        playAudio('slice');
-        addScore(this.type.score, this.mesh.position);
-        this.spawnHalves(dir);
-    }
+        const particleCount = 2500; // 粒子数量，移动端适中
+        const geometry = new THREE.BufferGeometry();
+        const positions = [];
+        const targets = []; // 树的目标位置
+        const randoms = []; // 用于散开时的随机位置
+        const sizes = [];
+        const colors = [];
+        const types = []; // 0: sphere, 1: gift, 2: sock, 3: bell, 4: tie, 5: tree, 6: santa
 
-    spawnHalves(dir) {
-        const normal = new THREE.Vector2(-dir.y, dir.x);
-        for(let i=-1; i<=1; i+=2) {
-            const m = new THREE.Mesh(halfGeo, this.mesh.material);
-            m.scale.setScalar(this.type.size);
-            m.position.copy(this.mesh.position);
-            m.lookAt(this.mesh.position.clone().add(new THREE.Vector3(normal.x, normal.y, 0)));
-            if(i===1) m.rotateX(Math.PI);
+        // 预定义颜色和 Emoji
+        const palette = [0xff0000, 0x00ff00, 0xffd700, 0xffffff, 0x00bfff];
+        const emojis = ['🎁', '🔔', '👔', '🎅', '🎄', '⭐', '❄️'];
+
+        // 生成纹理图集 (Texture Atlas) - 用 Canvas 画 Emoji
+        function createEmojiTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.font = '60px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
             
-            m.userData.vel = this.velocity.clone().add(
-                new THREE.Vector3(normal.x*i*0.15, normal.y*i*0.15, Math.random()*0.3)
+            // 将 Emoji 画在网格上，然后在 Shader 中通过 UV 偏移选择
+            // 这里为了简化 Shader，我们直接生成单一纹理，后续若需不同 Emoji 最好用 SpriteSheet
+            // 为了演示效果，我们用一个包含混合图案的纹理
+            emojis.forEach((emoji) => {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                ctx.fillStyle = 'white';
+                ctx.fillText(emoji, x, y);
+            });
+            
+            // 绘制一些基本图形
+            for(let i=0; i<20; i++) {
+                ctx.beginPath();
+                ctx.arc(Math.random()*512, Math.random()*512, 10, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                ctx.fill();
+            }
+
+            const tex = new THREE.CanvasTexture(canvas);
+            return tex;
+        }
+        
+        const particleTexture = createEmojiTexture();
+
+        // 构建圣诞树形状 (螺旋圆锥)
+        for (let i = 0; i < particleCount; i++) {
+            // 随机分布 (散开状态)
+            const rx = (Math.random() - 0.5) * 60;
+            const ry = (Math.random() - 0.5) * 60;
+            const rz = (Math.random() - 0.5) * 60;
+            positions.push(rx, ry, rz);
+            randoms.push(rx, ry, rz);
+
+            // 树形分布 (目标状态)
+            const angle = i * 0.15; // 螺旋密度
+            const height = 20 - (i / particleCount) * 20; // 高度 20 到 0
+            const radius = (20 - height) * 0.4 + Math.random(); // 底部宽顶部窄
+            const tx = Math.cos(angle) * radius;
+            const ty = height;
+            const tz = Math.sin(angle) * radius;
+            targets.push(tx, ty, tz);
+
+            sizes.push(Math.random() * 0.5 + 0.5);
+            
+            const color = new THREE.Color(palette[Math.floor(Math.random() * palette.length)]);
+            colors.push(color.r, color.g, color.b);
+            
+            types.push(Math.floor(Math.random() * 7));
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('target', new THREE.Float32BufferAttribute(targets, 3));
+        geometry.setAttribute('aRandom', new THREE.Float32BufferAttribute(randoms, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+        // 自定义着色器 - 实现极致丝滑的变形和光照
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0 },
+                uMix: { value: 0 }, // 0: 散开, 1: 树
+                uTexture: { value: particleTexture },
+                uScale: { value: 1.0 },
+                uLightPos: { value: new THREE.Vector3(0, 22, 0) }
+            },
+            vertexShader: `
+                uniform float uTime;
+                uniform float uMix;
+                uniform float uScale;
+                uniform vec3 uLightPos;
+                
+                attribute vec3 target;
+                attribute vec3 aRandom;
+                attribute vec3 color;
+                attribute float size;
+                
+                varying vec3 vColor;
+                varying float vAlpha;
+                varying float vDistToLight;
+
+                // 简单的噪声函数，让散开时有飘动感
+                float random(vec2 st) {
+                    return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+                }
+
+                void main() {
+                    vColor = color;
+                    
+                    // 混合位置
+                    vec3 pos = mix(aRandom, target, uMix);
+                    
+                    // 散开时添加旋转和波动
+                    if(uMix < 0.8) {
+                        float angle = uTime * 0.5;
+                        float c = cos(angle);
+                        float s = sin(angle);
+                        mat3 rot = mat3(c, 0, s, 0, 1, 0, -s, 0, c);
+                        pos = rot * pos;
+                        
+                        pos.y += sin(uTime + pos.x) * 0.5;
+                    }
+
+                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                    
+                    // 粒子大小随距离变化，且受手势缩放影响
+                    gl_PointSize = size * (300.0 / -mvPosition.z) * uScale;
+                    
+                    // 计算光照反光
+                    float dist = distance(pos, uLightPos);
+                    vDistToLight = 1.0 - smoothstep(0.0, 30.0, dist);
+
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D uTexture;
+                varying vec3 vColor;
+                varying float vDistToLight;
+
+                void main() {
+                    // 圆形裁剪
+                    vec2 uv = gl_PointCoord;
+                    float dist = distance(uv, vec2(0.5));
+                    if (dist > 0.5) discard;
+                    
+                    vec4 texColor = texture2D(uTexture, uv);
+                    
+                    // 基础颜色 + 灯光辉光 (反光效果)
+                    vec3 finalColor = vColor + vec3(0.8, 0.8, 0.6) * vDistToLight * 0.8;
+                    
+                    gl_FragColor = vec4(finalColor, 1.0);
+                }
+            `,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        scene.add(particleSystem);
+
+        // --- 3. 照片系统 (Sprite) ---
+        const photoGroup = new THREE.Group();
+        scene.add(photoGroup);
+        const uploadedPhotos = [];
+
+        function addPhotoToTree(texture) {
+            const spriteMat = new THREE.SpriteMaterial({ 
+                map: texture, 
+                color: 0xffffff,
+                transparent: true
+            });
+            const sprite = new THREE.Sprite(spriteMat);
+            
+            // 随机放置在树的范围内
+            const height = Math.random() * 18;
+            const angle = Math.random() * Math.PI * 2;
+            const radius = (20 - height) * 0.4 * 0.8; // 稍微在内部一点
+            
+            sprite.position.set(
+                Math.cos(angle) * radius,
+                height,
+                Math.sin(angle) * radius
             );
-            m.userData.rot = new THREE.Vector3(Math.random(), Math.random(), 0);
-            scene.add(m);
-            slicedParts.push(m);
-        }
-    }
-}
-
-// 辅助：加分与特效
-function addScore(val, pos3d) {
-    state.score += val;
-    scoreEl.innerText = state.score;
-    
-    // 浮动文字特效
-    const div = document.createElement('div');
-    div.innerText = "+" + val;
-    div.className = 'float-score';
-    const screenPos = pos3d.clone().project(camera);
-    div.style.left = ((screenPos.x * .5 + .5) * window.innerWidth) + 'px';
-    div.style.top = (-(screenPos.y * .5 + .5) * window.innerHeight) + 'px';
-    document.body.appendChild(div);
-    setTimeout(()=>div.remove(), 800);
-}
-
-// ================= 游戏流程控制 =================
-function startGame() {
-    state.score = 0;
-    state.isPlaying = true;
-    state.isGameOver = false;
-    state.startTime = Date.now();
-    state.timeLeft = config.gameDuration;
-    
-    scoreEl.innerText = "0";
-    timerEl.innerText = config.gameDuration.toFixed(2);
-    timerEl.classList.remove('warning');
-    
-    // 重置水果
-    fruits.forEach(f => { f.active = false; f.mesh.visible = false; });
-    slicedParts.forEach(p => scene.remove(p));
-    slicedParts = [];
-
-    overlay.style.opacity = 0;
-    setTimeout(() => overlay.style.display = 'none', 300);
-}
-
-function updateTimer() {
-    if(!state.isPlaying) return;
-    
-    const now = Date.now();
-    const elapsed = (now - state.startTime) / 1000;
-    state.timeLeft = Math.max(0, config.gameDuration - elapsed);
-    
-    timerEl.innerText = state.timeLeft.toFixed(2);
-    
-    if (state.timeLeft <= 5) timerEl.classList.add('warning');
-    
-    if (state.timeLeft <= 0) {
-        gameOver();
-    }
-}
-
-function gameOver() {
-    state.isPlaying = false;
-    state.isGameOver = true;
-    
-    document.getElementById('final-score').innerText = state.score;
-    
-    titleEl.style.display = 'none';
-    loadingText.style.display = 'none';
-    startBtn.style.display = 'none';
-    resultPanel.style.display = 'block';
-    
-    overlay.style.display = 'flex';
-    setTimeout(()=> overlay.style.opacity = 1, 10);
-}
-
-// ================= 逻辑循环 =================
-function updateGame() {
-    updateTimer();
-    
-    // 生成水果
-    if (state.isPlaying && Math.random() < config.spawnRate) {
-        let f = fruits.find(x => !x.active);
-        if (!f) { f = new Fruit(); fruits.push(f); }
-        else { f.reset(); }
-    }
-    
-    // 更新物体
-    fruits.forEach(f => f.update());
-    for(let i=slicedParts.length-1; i>=0; i--) {
-        let p = slicedParts[i];
-        p.userData.vel.y += config.gravity * 1.5;
-        p.position.add(p.userData.vel);
-        p.rotation.x += p.userData.rot.x;
-        if(p.position.y < -20) {
-            scene.remove(p);
-            slicedParts.splice(i,1);
-        }
-    }
-}
-
-// ================= 输入与切割 =================
-const trailMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 3, opacity: 0.8, transparent: true });
-const trailLine = new THREE.Line(new THREE.BufferGeometry(), trailMat);
-scene.add(trailLine);
-
-function updateInput() {
-    if (!state.hasHand) {
-        state.trailPoints = [];
-        trailLine.visible = false;
-        return;
-    }
-
-    const dx = state.fingerPos.x - state.lastFingerPos.x;
-    const dy = state.fingerPos.y - state.lastFingerPos.y;
-    state.fingerVelocity = Math.sqrt(dx*dx + dy*dy);
-    
-    // 3D 轨迹计算
-    const v = new THREE.Vector3((state.fingerPos.x/window.innerWidth)*2-1, -(state.fingerPos.y/window.innerHeight)*2+1, 0.5);
-    v.unproject(camera);
-    const dir = v.sub(camera.position).normalize();
-    const dist = -camera.position.z / dir.z;
-    const pos3d = camera.position.clone().add(dir.multiplyScalar(dist));
-    
-    state.trailPoints.unshift(pos3d);
-    if(state.trailPoints.length > 8) state.trailPoints.pop();
-    
-    if(state.trailPoints.length>1) {
-        trailLine.geometry.setFromPoints(state.trailPoints);
-        trailLine.visible = true;
-    }
-    
-    // 切割检测
-    if (state.fingerVelocity > config.swipeSpeed) {
-        const cutDir = new THREE.Vector2(dx, dy).normalize();
-        fruits.forEach(f => {
-            if(!f.active || f.isSliced) return;
-            const sPos = f.mesh.position.clone().project(camera);
-            const fx = (sPos.x*.5+.5)*window.innerWidth;
-            const fy = (-(sPos.y*.5)+.5)*window.innerHeight;
             
-            // 判定半径宽松点
-            if (Math.hypot(state.fingerPos.x - fx, state.fingerPos.y - fy) < f.type.size * 130) {
-                f.slice(cutDir);
+            // 初始大小和粒子差不多
+            sprite.scale.set(1.5, 1.5, 1.5);
+            
+            // 保存原始位置以便复原
+            sprite.userData = { 
+                originalPos: sprite.position.clone(),
+                originalScale: new THREE.Vector3(1.5, 1.5, 1.5),
+                isFocused: false 
+            };
+            
+            photoGroup.add(sprite);
+            uploadedPhotos.push(sprite);
+        }
+
+        // --- 4. 交互逻辑 (MediaPipe Hands) ---
+        
+        let targetMix = 0; // 0 = 散开, 1 = 树
+        let targetScale = 1;
+        let isPinching = false;
+        let pinchTimer = 0;
+
+        const videoElement = document.getElementById('camera-feed');
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        // 启动摄像头
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 320,
+            height: 240
+        });
+        cameraUtils.start().then(() => {
+            document.getElementById('loading').style.display = 'none';
+        });
+
+        function calculateDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        // 状态平滑过渡变量
+        const smoothState = { mix: 0, scale: 1, rotY: 0 };
+
+        function onResults(results) {
+            let gestureDetected = 'OPEN'; // DEFAULT
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // 1. 检测握拳 (Fist): 指尖靠近掌心
+                // 简单判定：食指指尖(8) 到 掌心(0) 的距离 < 食指根部(5) 到 掌心(0)
+                const palmBase = landmarks[0];
+                const indexTip = landmarks[8];
+                const indexBase = landmarks[5];
+                
+                const tipDist = calculateDistance(indexTip, palmBase);
+                const baseDist = calculateDistance(indexBase, palmBase);
+                
+                // 2. 检测捏合 (Pinch): 拇指尖(4) 和 食指尖(8) 距离极近
+                const thumbTip = landmarks[4];
+                const pinchDist = calculateDistance(thumbTip, indexTip);
+                
+                if (pinchDist < 0.05) {
+                    gestureDetected = 'PINCH';
+                } else if (tipDist < baseDist * 0.8) { // 简单握拳判定
+                    gestureDetected = 'FIST';
+                } else {
+                    gestureDetected = 'OPEN';
+                }
+
+                // 计算双手距离用于缩放 (如果检测到两只手)
+                if (results.multiHandLandmarks.length === 2) {
+                    const hand1 = results.multiHandLandmarks[0][0];
+                    const hand2 = results.multiHandLandmarks[1][0];
+                    const dist = calculateDistance(hand1, hand2);
+                    // 映射距离 0.2-0.8 到 缩放 0.5-2.0
+                    targetScale = Math.max(0.5, Math.min(2.5, dist * 3));
+                }
+            } else {
+                // 无手势，默认自动旋转
+                gestureDetected = 'IDLE';
+            }
+
+            // 状态逻辑处理
+            if (gestureDetected === 'FIST') {
+                targetMix = 1; // 聚合成树
+                isPinching = false;
+            } else if (gestureDetected === 'OPEN') {
+                targetMix = 0; // 散开
+                isPinching = false;
+                // 复原照片
+                resetPhotos();
+            } else if (gestureDetected === 'PINCH') {
+                targetMix = 0; // 捏合时保持散开状态 (用户要求：捏合时粒子处于散开的状态保持不变)
+                // 但这里有点冲突，如果"散开用粒子组成的圣诞树"是指保持树形但松散？
+                // 让我们理解为：捏合时，我们关注照片，背景保持当前状态。
+                // 触发照片抓取
+                if (!isPinching) {
+                    isPinching = true;
+                    focusRandomPhoto();
+                }
+            }
+        }
+
+        // --- 5. 动画与过渡特效 (GSAP & Loop) ---
+
+        let activePhoto = null;
+
+        function focusRandomPhoto() {
+            if (uploadedPhotos.length === 0) return;
+            if (activePhoto) return; // 已经有照片在展示中
+
+            // 随机选一张
+            const index = Math.floor(Math.random() * uploadedPhotos.length);
+            activePhoto = uploadedPhotos[index];
+            activePhoto.userData.isFocused = true;
+
+            // GSAP 丝滑入场动画
+            // 1. 移动到相机前方
+            // 2. 放大
+            // 3. 添加光晕 (通过 Scale 模拟或 Shader)
+            
+            // 计算相机前方的位置
+            const vector = new THREE.Vector3(0, 0, -10);
+            vector.applyQuaternion(camera.quaternion);
+            const targetPos = camera.position.clone().add(vector);
+            targetPos.y -= 2; // 稍微调整高度
+
+            // 不同的过渡特效 (简单模拟：旋转入场 或 弹性入场)
+            const effectType = Math.random() > 0.5 ? 'elastic' : 'rotate';
+
+            if (effectType === 'elastic') {
+                gsap.to(activePhoto.position, {
+                    x: targetPos.x, y: targetPos.y, z: targetPos.z,
+                    duration: 1.5, ease: "elastic.out(1, 0.5)"
+                });
+            } else {
+                gsap.to(activePhoto.position, {
+                    x: targetPos.x, y: targetPos.y, z: targetPos.z,
+                    duration: 1.2, ease: "power3.out"
+                });
+                // 旋转一圈
+                gsap.fromTo(activePhoto.material, { rotation: 0 }, { rotation: Math.PI * 2, duration: 1 });
+            }
+
+            // 放大并添加辉光效果 (这里简化为放大)
+            gsap.to(activePhoto.scale, {
+                x: 8, y: 8, z: 8,
+                duration: 1,
+                ease: "power2.out"
+            });
+        }
+
+        function resetPhotos() {
+            if (!activePhoto) return;
+            
+            // 复原
+            gsap.to(activePhoto.position, {
+                x: activePhoto.userData.originalPos.x,
+                y: activePhoto.userData.originalPos.y,
+                z: activePhoto.userData.originalPos.z,
+                duration: 0.8,
+                ease: "power2.inOut"
+            });
+            gsap.to(activePhoto.scale, {
+                x: activePhoto.userData.originalScale.x,
+                y: activePhoto.userData.originalScale.y,
+                z: activePhoto.userData.originalScale.z,
+                duration: 0.8,
+                onComplete: () => {
+                    activePhoto.userData.isFocused = false;
+                    activePhoto = null;
+                }
+            });
+        }
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const dt = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            // 平滑混合 uniform
+            smoothState.mix += (targetMix - smoothState.mix) * 5 * dt;
+            smoothState.scale += (targetScale - smoothState.scale) * 3 * dt;
+
+            // 更新 Shader Uniforms
+            material.uniforms.uTime.value = time;
+            material.uniforms.uMix.value = smoothState.mix;
+            material.uniforms.uScale.value = smoothState.scale;
+
+            // 旋转逻辑：散开时旋转，聚合时慢慢对齐
+            if (smoothState.mix < 0.5) {
+                // 散开旋转
+                particleSystem.rotation.y += 0.2 * dt;
+                photoGroup.rotation.y += 0.2 * dt;
+            } else {
+                // 聚合时缓慢复位或轻微摆动
+                particleSystem.rotation.y += (0 - particleSystem.rotation.y) * 0.1 * dt;
+                photoGroup.rotation.y += (0 - photoGroup.rotation.y) * 0.1 * dt;
+            }
+
+            // 更新照片组位置 (跟随粒子树缩放)
+            // 简单处理：当树变大变小时，照片组整体也可以缩放，但我们已在 shader 中缩放粒子
+            // 这里我们手动缩放 photoGroup
+            photoGroup.scale.setScalar(smoothState.scale);
+
+            // 让照片面向相机
+            uploadedPhotos.forEach(p => {
+                // 如果是被抓取的照片，不需要一直在此处设 rotation，因为 GSAP 可能在控制
+                // 但 SpriteMaterial 默认就是面向相机的，所以只需处理位置
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // --- 6. UI 事件处理 ---
+
+        document.getElementById('upload-btn').addEventListener('click', () => {
+            document.getElementById('file-input').click();
+        });
+
+        document.getElementById('file-input').addEventListener('change', (e) => {
+            const files = e.target.files;
+            if (files.length > 0) {
+                for (let i = 0; i < files.length; i++) {
+                    const reader = new FileReader();
+                    reader.onload = function(event) {
+                        const img = new Image();
+                        img.src = event.target.result;
+                        img.onload = () => {
+                            const texture = new THREE.Texture(img);
+                            texture.needsUpdate = true;
+                            addPhotoToTree(texture);
+                        }
+                    }
+                    reader.readAsDataURL(files[i]);
+                }
             }
         });
-    }
-    state.lastFingerPos.copy(state.fingerPos);
-}
 
-// ================= AI =================
-function onResults(res) {
-    if(loadingText.style.display!=='none') {
-        loadingText.style.display='none';
-        startBtn.style.display='block';
-    }
-    if(res.multiHandLandmarks && res.multiHandLandmarks.length>0) {
-        state.hasHand = true;
-        const lm = res.multiHandLandmarks[0][8];
-        state.fingerPos.set((1-lm.x)*window.innerWidth, lm.y*window.innerHeight);
-    } else {
-        state.hasHand = false;
-    }
-}
-const hands = new Hands({locateFile: f=>`https://unpkg.com/@mediapipe/hands@0.4.1646424915/${f}`});
-hands.setOptions({maxNumHands:1, modelComplexity:1, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
-hands.onResults(onResults);
-const cam = new Camera(document.getElementById('input_video'), {
-    onFrame: async()=>{await hands.send({image:document.getElementById('input_video')})},
-    width:640, height:480
-});
-cam.start();
+        document.getElementById('fullscreen-btn').addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        });
 
-// ================= Audio =================
-const audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-function playAudio() {
-    if(audioCtx.state==='suspended') audioCtx.resume();
-    const osc = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    osc.connect(g); g.connect(audioCtx.destination);
-    osc.type='sawtooth'; osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime+0.1);
-    g.gain.setValueAtTime(0.2, audioCtx.currentTime);
-    g.gain.linearRampToValueAtTime(0, audioCtx.currentTime+0.1);
-    osc.start(); osc.stop(audioCtx.currentTime+0.1);
-}
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        });
 
-startBtn.onclick = () => { audioCtx.resume(); startGame(); };
-restartBtn.onclick = () => { startGame(); };
-
-function animate() {
-    requestAnimationFrame(animate);
-    updateInput();
-    updateGame();
-    renderer.render(scene, camera);
-}
-animate();
-
-window.onresize = () => {
-    camera.aspect = window.innerWidth/window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-};
-</script>
+    </script>
 </body>
 </html>
