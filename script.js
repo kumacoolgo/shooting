@@ -299,8 +299,8 @@ function animate() {
         }
 
         // 2. 阻尼 (0.95)
-        rotationVelocity.y *= 0.95; 
-        rotationVelocity.x *= 0.95;
+        rotationVelocity.y *= 0.99; 
+        rotationVelocity.x *= 0.98;
 
         // 3. 限速 (0.05)
         const MAX_SPEED = 0.05;
