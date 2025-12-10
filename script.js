@@ -12,11 +12,9 @@ const FORCE_NO_SKELETON = new URLSearchParams(location.search).has('noskel');
 
 // ===================== 1. 性能自适应 =====================
 function getPerfProfile() {
-    // 1. 优先读取手动设置
     const saved = localStorage.getItem('jt_perf_profile');
     if (saved && ['low', 'medium', 'high'].includes(saved)) return { mode: saved, source: 'MANUAL' };
 
-    // 2. 自动检测
     const ua = navigator.userAgent || "";
     const isMobile = /Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(ua);
     const cores = navigator.hardwareConcurrency || 4;
@@ -129,7 +127,19 @@ function initThree() {
 
     scene.add(mainGroup);
     window.addEventListener('resize', onWindowResize);
-    document.addEventListener('visibilitychange', () => { isPaused = document.hidden; });
+    
+    // 【iOS 修复核心】页面可见性变化时，强制检查视频状态
+    document.addEventListener('visibilitychange', () => { 
+        isPaused = document.hidden;
+        if (!document.hidden) {
+            const video = document.getElementById("input-video");
+            // 如果回到页面发现视频暂停了，尝试播放
+            if (video && video.paused && video.srcObject) {
+                video.play().catch(e => console.log("iOS Resume:", e));
+            }
+        }
+    });
+    
     initUI();
 }
 
@@ -154,11 +164,8 @@ function initUI() {
         const colors = { low: '#ff4444', medium: '#d4af37', high: '#00ff88' };
         badge.style.borderColor = colors[PERF_PROFILE];
         badge.style.color = colors[PERF_PROFILE];
-        
-        // **修复：点击切换逻辑**
         badge.onclick = () => {
             const modes = ['low', 'medium', 'high', 'auto'];
-            // 确定当前位置 (Auto 视为 3)
             const currentIdx = CURRENT_PROFILE_INFO.source === 'AUTO' ? 3 : modes.indexOf(PERF_PROFILE);
             const nextIdx = (currentIdx + 1) % modes.length;
             const nextMode = modes[nextIdx];
@@ -277,15 +284,15 @@ function animate() {
         rotationVelocity.x = 0; rotationVelocity.y = 0;
     } 
     else if (currentState === STATE.SCATTER) {
-        // --- 优化后的物理引擎 ---
+        // --- 物理引擎 ---
         if (isHandPresent) {
             const deltaX = handPos.x - lastHandPos.x;
             const deltaY = handPos.y - lastHandPos.y;
 
             // 1. 推力 (Sensitivity 1.3)
             if (Math.abs(deltaX) > 0.001 || Math.abs(deltaY) > 0.001) {
-                rotationVelocity.y += deltaX * 1.3; 
-                rotationVelocity.x += deltaY * 1.3;
+                rotationVelocity.y += deltaX * 1.5; 
+                rotationVelocity.x += deltaY * 1.5;
             }
             lastHandPos.x = handPos.x;
             lastHandPos.y = handPos.y;
@@ -303,7 +310,7 @@ function animate() {
         // 4. 应用
         mainGroup.rotation.y += rotationVelocity.y;
         mainGroup.rotation.x += rotationVelocity.x;
-        mainGroup.rotation.x *= 0.98; // 回正 X
+        mainGroup.rotation.x *= 0.98; 
 
     } else if (currentState === STATE.TREE) {
         mainGroup.rotation.y += 0.003;
@@ -363,7 +370,6 @@ function updatePhotos() {
             targetScale = 8.0; mesh.lookAt(camPos); 
         }
         if (currentState === STATE.ZOOM && idx === zoomTargetIndex) {
-            // **优化：复用 _tempVec3 减少 GC**
             _tempVec3.copy(_zoomTargetWorldPos);
             targetPos = mainGroup.worldToLocal(_tempVec3);
             targetScale = 12.0;
@@ -412,6 +418,12 @@ async function predictWebcam(handLandmarker, video) {
     if(isPaused) { requestAnimationFrame(() => predictWebcam(handLandmarker, video)); return; }
     gestureFrameCounter = (gestureFrameCounter + 1) % GESTURE_FRAME_SKIP;
     if (gestureFrameCounter !== 0) { requestAnimationFrame(() => predictWebcam(handLandmarker, video)); return; }
+    
+    // 【iOS 唤醒保护】如果在循环检测中发现视频暂停了，尝试强制播放
+    if (video.paused && video.srcObject && !document.hidden) {
+        video.play().catch(()=>{});
+    }
+
     if (video.currentTime !== lastVideoTime) {
         lastVideoTime = video.currentTime;
         const result = handLandmarker.detectForVideo(video, performance.now());
@@ -436,7 +448,6 @@ function handleGesture(landmarks) {
     handPos.x = handPos.x * 0.8 + palmX * 0.2;
     handPos.y = handPos.y * 0.8 + palmY * 0.2;
 
-    // 握拳检测
     let bentFingers = 0;
     const tips = [8, 12, 16, 20], pips = [6, 10, 14, 18], wrist = landmarks[0];
     tips.forEach((tipIdx, i) => {
@@ -445,10 +456,8 @@ function handleGesture(landmarks) {
         if (dTip < dPip) bentFingers++;
     });
 
-    // 捏合检测
     const pinchDist = Math.hypot(landmarks[4].x - landmarks[8].x, landmarks[4].y - landmarks[8].y);
     
-    // 优先级判定：握拳 > 捏合
     const isFistState = bentFingers >= 3;
     const isPinchState = !isFistState && pinchDist < 0.05;
 
@@ -521,6 +530,13 @@ fileInput.addEventListener('change', function(e) {
         reader.onload = (evt) => { const img = new Image(); img.src = evt.target.result; img.onload = () => { addPhotoMesh(img); }; };
         reader.readAsDataURL(files[i]);
     }
+    
+    // 【iOS 修复核心】文件上传后强制唤醒摄像头
+    const video = document.getElementById("input-video");
+    if (video && video.paused) {
+        video.play().catch(e => console.log("iOS Resume (Upload):", e));
+    }
+    
     alert(`已添加 ${addCount} 张照片`);
     fileInput.value = '';
 });
